@@ -2,3 +2,8 @@ __pycache__/
 .env
 node_modules/
 *.pyc
+venv/
+.venv/
+dist/
+*.log
+uploads/

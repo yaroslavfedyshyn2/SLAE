@@ -7,21 +7,47 @@ services:
       POSTGRES_DB: slae
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U slae -d slae"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
 
   redis:
     image: redis:7
+
+  migrate:
+    build: ./backend
+    command: alembic upgrade head
+    environment:
+      DATABASE_URL: postgresql+psycopg2://slae:slae@postgres:5432/slae
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   api1:
     build: ./backend
     environment:
       INSTANCE_NAME: api1
-    depends_on: [postgres, redis]
+      DATABASE_URL: postgresql+psycopg2://slae:slae@postgres:5432/slae
+      SECRET_KEY: dev-secret-change-me
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
 
   api2:
     build: ./backend
     environment:
       INSTANCE_NAME: api2
-    depends_on: [postgres, redis]
+      DATABASE_URL: postgresql+psycopg2://slae:slae@postgres:5432/slae
+      SECRET_KEY: dev-secret-change-me
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
 
   nginx:
     image: nginx:1.27
