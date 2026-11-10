@@ -7,3 +7,4 @@ venv/
 dist/
 *.log
 uploads/
+nginx/certs/
