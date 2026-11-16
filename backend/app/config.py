@@ -8,3 +8,7 @@ JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
 TASK_TIME_LIMIT = int(os.getenv("TASK_TIME_LIMIT", "600"))  
+MAX_N = int(os.getenv("MAX_N", "5000"))
+MAX_ACTIVE_TASKS = int(os.getenv("MAX_ACTIVE_TASKS", "5"))
+MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_MB", "300")) * 1024 * 1024
+UPLOAD_DIR = os.getenv("UPLOAD_DIR", "/data/uploads")

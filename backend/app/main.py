@@ -1,12 +1,12 @@
 import os
-import os
 
 from fastapi import FastAPI
 
-from app.routers import auth
+from app.routers import auth, tasks
 
 app = FastAPI(root_path="/api")
 app.include_router(auth.router)
+app.include_router(tasks.router)
 
 
 @app.get("/whoami")

@@ -1,4 +1,6 @@
+import contextlib
 import logging
+import os
 import time
 from datetime import datetime, timezone
 
@@ -6,7 +8,7 @@ import numpy as np
 import redis
 
 from app.celery_app import celery_app
-from app.config import REDIS_URL, TASK_TIME_LIMIT
+from app.config import REDIS_URL, TASK_TIME_LIMIT, UPLOAD_DIR
 from app.database import SessionLocal
 from app.models import Task
 from app.solver import SingularMatrix, SolverCancelled, solve_gauss
@@ -24,6 +26,28 @@ def generate_system(task_id, n):
     """Випадкова система. Seed = id задачі, тож результат відтворюваний."""
     rng = np.random.default_rng(task_id)
     return rng.random((n, n)), rng.random(n)
+
+
+def upload_path(task_id):
+    return os.path.join(UPLOAD_DIR, f"{task_id}.txt")
+
+
+def load_uploaded_system(task_id, n):
+    """Читає розширену матрицю [A | b] із текстового файлу (пробіли або коми)."""
+    path = upload_path(task_id)
+    with open(path, "rb") as f:
+        first = f.readline()
+    delimiter = "," if b"," in first else None
+    data = np.loadtxt(path, delimiter=delimiter, dtype=np.float64, ndmin=2)
+    if data.shape != (n, n + 1):
+        raise ValueError(f"Expected {n}x{n + 1} values (matrix A and column b), got {data.shape}")
+    return data[:, :-1], data[:, -1]
+
+
+def load_system(task):
+    if task.source == "upload":
+        return load_uploaded_system(task.id, task.n)
+    return generate_system(task.id, task.n)
 
 
 def _finish(db, task, status, error=None, progress=None):
@@ -50,12 +74,13 @@ def solve_task(task_id):
         if task is None or task.status != "QUEUED":
             return  # задачі немає, або її вже скасовано/виконано
 
+        is_upload = task.source == "upload"
         task.status = "RUNNING"
         task.started_at = _now()
         db.commit()
 
         try:
-            A, b = generate_system(task_id, task.n)
+            A, b = load_system(task)
 
             # Ліміт часу перевіряємо тут, а не через Celery soft_time_limit:
             # Celery бере ліміт з боку відправника задачі, і він міг би
@@ -92,6 +117,9 @@ def solve_task(task_id):
             _finish(db, task, "FAILED", f"{type(exc).__name__}: {exc}")
         finally:
             r.delete(f"cancel:{task_id}")
+            if is_upload:
+                with contextlib.suppress(FileNotFoundError):
+                    os.remove(upload_path(task_id))
     finally:
         db.close()
         r.close()

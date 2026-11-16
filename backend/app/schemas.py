@@ -1,3 +1,4 @@
+from datetime import datetime
 from pydantic import BaseModel, Field
 
 
@@ -22,3 +23,20 @@ class UserOut(BaseModel):
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
+class TaskCreate(BaseModel):
+    n: int
+
+
+class TaskOut(BaseModel):
+    id: int
+    status: str
+    source: str
+    n: int
+    progress: float
+    current_row: int
+    error: str | None
+    created_at: datetime
+    started_at: datetime | None
+    finished_at: datetime | None
+
+    model_config = {"from_attributes": True}

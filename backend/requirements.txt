@@ -7,3 +7,4 @@ pyjwt==2.*
 bcrypt==4.*
 numpy==2.*
 celery[redis]==5.*
+python-multipart==0.0.*
