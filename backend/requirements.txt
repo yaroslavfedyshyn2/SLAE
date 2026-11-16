@@ -6,3 +6,4 @@ alembic==1.14.*
 pyjwt==2.*
 bcrypt==4.*
 numpy==2.*
+celery[redis]==5.*
