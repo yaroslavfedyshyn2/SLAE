@@ -36,6 +36,8 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_started
+    volumes:
+    - uploads:/data/uploads
 
   api2:
     build: ./backend
@@ -48,6 +50,8 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_started
+    volumes:
+    - uploads:/data/uploads
   worker:
     build: ./backend
     command: celery -A app.celery_app worker --loglevel=info --concurrency=1
@@ -59,6 +63,8 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_started
+    volumes:
+    - uploads:/data/uploads
   nginx:
     image: nginx:1.27
     ports:
@@ -71,3 +77,4 @@ services:
 
 volumes:
   pgdata:
+  uploads:

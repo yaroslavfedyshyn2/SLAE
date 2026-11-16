@@ -1,21 +1,23 @@
 import os
 import shutil
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from sqlalchemy import func, select
+import redis
+from fastapi import APIRouter, Depends, File, HTTPException,Query, Response, UploadFile
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
-from app.config import MAX_ACTIVE_TASKS, MAX_N, MAX_UPLOAD_BYTES, UPLOAD_DIR
+from app.config import MAX_ACTIVE_TASKS, MAX_N, MAX_UPLOAD_BYTES, REDIS_URL, UPLOAD_DIR
 from app.database import get_db
 from app.deps import get_current_user
 from app.models import Task, User
 from app.schemas import TaskCreate, TaskOut
-from app.tasks import solve_task, upload_path
+from app.tasks import _publish,solve_task, upload_path
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
 ACTIVE_STATUSES = ("QUEUED", "RUNNING")
-
+CANCEL_FLAG_TTL = 3600  
+redis_client = redis.Redis.from_url(REDIS_URL)
 
 def check_n(n: int) -> None:
     if n < 1 or n > MAX_N:
@@ -121,7 +123,21 @@ def upload_task(
     enqueue(db, task)
     return task
 
-
+@router.get("", response_model=list[TaskOut])
+def list_tasks(
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Історія задач поточного користувача, найновіші першими."""
+    return db.scalars(
+        select(Task)
+        .where(Task.user_id == user.id)
+        .order_by(Task.id.desc())
+        .limit(limit)
+        .offset(offset)
+    ).all()
 @router.get("/{task_id}", response_model=TaskOut)
 def get_task(
     task_id: int,
@@ -131,4 +147,38 @@ def get_task(
     task = db.get(Task, task_id)
     if task is None or task.user_id != user.id:
         raise HTTPException(404, "Task not found")
+    return task
+
+@router.post("/{task_id}/cancel", response_model=TaskOut)
+def cancel_task(
+    task_id: int,
+    response: Response,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    task = db.get(Task, task_id)
+    if task is None or task.user_id != user.id:
+        raise HTTPException(404, "Task not found")
+    if task.status not in ACTIVE_STATUSES:
+        raise HTTPException(409, f"Task is already {task.status}")
+
+    try:
+        redis_client.set(f"cancel:{task_id}", 1, ex=CANCEL_FLAG_TTL)
+    except redis.RedisError:
+        raise HTTPException(503, "Task queue is unavailable, try again later")
+
+    cancelled = db.execute(
+        update(Task)
+        .where(Task.id == task_id, Task.status == "QUEUED")
+        .values(status="CANCELLED", finished_at=func.now())
+    ).rowcount
+    db.commit()
+    db.refresh(task)
+
+    if cancelled:
+        _publish(redis_client, task)  
+    elif task.status in ACTIVE_STATUSES:
+        response.status_code = 202  
+    else:
+        raise HTTPException(409, f"Task is already {task.status}")
     return task
