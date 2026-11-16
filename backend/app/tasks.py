@@ -3,9 +3,11 @@ import logging
 import os
 import time
 from datetime import datetime, timezone
-
+import json
+import logging
 import numpy as np
 import redis
+import time
 
 from app.celery_app import celery_app
 from app.config import REDIS_URL, TASK_TIME_LIMIT, UPLOAD_DIR
@@ -20,8 +22,22 @@ CANCEL_CHECK_EVERY = 20  # перевіряти прапорець скасув�
 
 def _now():
     return datetime.now(timezone.utc)
-
-
+def _publish(r, task):
+    """Надіслати поточний стан задачі в канал task:{id}.
+    Збій Redis не повинен ламати розв'язування: стан у будь-якому разі є в Postgres."""
+    try:
+        r.publish(
+            f"task:{task.id}",
+            json.dumps({
+                "status": task.status,
+                "progress": task.progress,
+                "current_row": task.current_row,
+                "n": task.n,
+                "error": task.error,
+            }),
+        )
+    except Exception:
+        log.warning("could not publish progress of task %s", task.id, exc_info=True)
 def generate_system(task_id, n):
     """Випадкова система. Seed = id задачі, тож результат відтворюваний."""
     rng = np.random.default_rng(task_id)
@@ -50,14 +66,15 @@ def load_system(task):
     return generate_system(task.id, task.n)
 
 
-def _finish(db, task, status, error=None, progress=None):
-    db.rollback()  # на випадок, якщо виняток перервав попередній commit
+def _finish(db, r, task, status, error=None, progress=None):
+    db.rollback()  
     task.status = status
     task.error = error
     task.finished_at = _now()
     if progress is not None:
         task.progress = progress
     db.commit()
+    _publish(r, task)
 
 
 @celery_app.task(name="ping")
@@ -72,12 +89,15 @@ def solve_task(task_id):
     try:
         task = db.get(Task, task_id)
         if task is None or task.status != "QUEUED":
-            return  # задачі немає, або її вже скасовано/виконано
-
+            if task is not None and task.status == "CANCELLED" and task.source == "upload":
+                with contextlib.suppress(FileNotFoundError):
+                    os.remove(upload_path(task_id))
+            return
         is_upload = task.source == "upload"
         task.status = "RUNNING"
         task.started_at = _now()
         db.commit()
+        _publish(r, task)
 
         try:
             A, b = load_system(task)
@@ -101,20 +121,21 @@ def solve_task(task_id):
                 task.current_row = row
                 task.progress = round(100.0 * row / n, 1)
                 db.commit()
+                _publish(r, task)
 
             solve_gauss(A, b, on_progress=on_progress, should_cancel=should_cancel)
-            _finish(db, task, "DONE", progress=100.0)
+            _finish(db,r, task, "DONE", progress=100.0)
 
         except SolverCancelled:
             if state["timed_out"]:
-                _finish(db, task, "FAILED", f"Time limit exceeded ({TASK_TIME_LIMIT} s)")
+                _finish(db,r, task, "FAILED", f"Time limit exceeded ({TASK_TIME_LIMIT} s)")
             else:
-                _finish(db, task, "CANCELLED")
+                _finish(db,r, task, "CANCELLED")
         except SingularMatrix:
-            _finish(db, task, "FAILED", "Matrix is singular: no unique solution")
+            _finish(db,r, task, "FAILED", "Matrix is singular: no unique solution")
         except Exception as exc:
             log.exception("solve_task %s failed", task_id)
-            _finish(db, task, "FAILED", f"{type(exc).__name__}: {exc}")
+            _finish(db,r, task, "FAILED", f"{type(exc).__name__}: {exc}")
         finally:
             r.delete(f"cancel:{task_id}")
             if is_upload:
