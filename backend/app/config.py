@@ -12,3 +12,5 @@ MAX_N = int(os.getenv("MAX_N", "5000"))
 MAX_ACTIVE_TASKS = int(os.getenv("MAX_ACTIVE_TASKS", "5"))
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_MB", "300")) * 1024 * 1024
 UPLOAD_DIR = os.getenv("UPLOAD_DIR", "/data/uploads")
+WORKER_COUNT = int(os.getenv("WORKER_COUNT", "1"))
+DEFAULT_AVG_SECONDS = float(os.getenv("DEFAULT_AVG_SECONDS", "30"))
