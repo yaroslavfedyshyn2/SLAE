@@ -5,12 +5,20 @@ import redis
 from fastapi import APIRouter, Depends, File, HTTPException,Query, Response, UploadFile
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
-
-from app.config import MAX_ACTIVE_TASKS, MAX_N, MAX_UPLOAD_BYTES, REDIS_URL, UPLOAD_DIR
+from app.config import (
+    DEFAULT_AVG_SECONDS,
+    MAX_ACTIVE_TASKS,
+    MAX_N,
+    MAX_UPLOAD_BYTES,
+    REDIS_URL,
+    UPLOAD_DIR,
+    WORKER_COUNT,
+)
 from app.database import get_db
 from app.deps import get_current_user
 from app.models import Task, User
-from app.schemas import TaskCreate, TaskOut
+from app.queue_estimate import estimate_wait
+from app.schemas import QueueItem, TaskCreate, TaskOut
 from app.tasks import _publish,solve_task, upload_path
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
@@ -138,6 +146,46 @@ def list_tasks(
         .limit(limit)
         .offset(offset)
     ).all()
+AVG_SAMPLE = 20  # скільки останніх задач DONE брати для середнього часу
+
+
+def average_duration(db: Session) -> float:
+    rows = db.execute(
+        select(Task.started_at, Task.finished_at)
+        .where(
+            Task.status == "DONE",
+            Task.started_at.is_not(None),
+            Task.finished_at.is_not(None),
+        )
+        .order_by(Task.id.desc())
+        .limit(AVG_SAMPLE)
+    ).all()
+    if not rows:
+        return DEFAULT_AVG_SECONDS
+    return sum((fin - start).total_seconds() for start, fin in rows) / len(rows)
+
+
+@router.get("/queue", response_model=list[QueueItem])
+def my_queue(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Позиція в черзі й оцінка очікування для моїх задач у статусі QUEUED.
+    Черга спільна для всіх користувачів, порядок за id."""
+    queued = db.execute(
+        select(Task.id, Task.user_id).where(Task.status == "QUEUED").order_by(Task.id)
+    ).all()
+    running = db.scalar(
+        select(func.count()).select_from(Task).where(Task.status == "RUNNING")
+    )
+    avg = average_duration(db)
+
+    result = []
+    for position, (task_id, owner_id) in enumerate(queued, start=1):
+        if owner_id == user.id:
+            wait = estimate_wait(position - 1, running, WORKER_COUNT, avg)
+            result.append(QueueItem(task_id=task_id, position=position, wait_seconds=wait))
+    return result
 @router.get("/{task_id}", response_model=TaskOut)
 def get_task(
     task_id: int,

@@ -40,3 +40,10 @@ class TaskOut(BaseModel):
     finished_at: datetime | None
 
     model_config = {"from_attributes": True}
+
+
+
+class QueueItem(BaseModel):
+    task_id: int
+    position: int
+    wait_seconds: int

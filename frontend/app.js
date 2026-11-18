@@ -10,7 +10,6 @@ const tabRegister = document.getElementById("tab-register");
 
 let mode = "login"; // "login" або "register"
 
-// Запит до API. Повертає {status, data}. Кидає Error з текстом, якщо API недоступний.
 async function api(path, { method = "GET", body } = {}) {
   const headers = {};
   const token = localStorage.getItem(TOKEN_KEY);
@@ -234,16 +233,64 @@ const tasksEmpty = document.getElementById("tasks-empty");
 const tasks = new Map();
 
 // Малює стан задачі. Підходить і для відповіді REST, і для події WebSocket (однакові поля).
+const QUEUE_POLL_MS = 5000;
+let queueTimer = null;
+
+function formatWait(sec) {
+  if (sec < 60) return sec + " с";
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return s === 0 ? m + " хв" : m + " хв " + s + " с";
+}
+
+function stopQueuePolling() {
+  if (queueTimer !== null) {
+    clearInterval(queueTimer);
+    queueTimer = null;
+  }
+}
+
+async function pollQueue() {
+  const waiting = [...tasks.values()].filter((t) => t.status === "QUEUED");
+  if (waiting.length === 0) {
+    stopQueuePolling();
+    return;
+  }
+  try {
+    const resp = await api("/tasks/queue");
+    if (resp.status !== 200) return;
+    for (const item of resp.data) {
+      const t = tasks.get(item.task_id);
+      if (t && t.status === "QUEUED") {
+        t.queueInfo.textContent =
+          "Позиція в черзі: " + item.position + ", очікування ≈ " + formatWait(item.wait_seconds);
+      }
+    }
+  } catch (e) {
+    // мережева помилка: спробуємо ще раз при наступному тіку
+  }
+}
+
+function startQueuePolling() {
+  if (queueTimer === null) {
+    queueTimer = setInterval(pollQueue, QUEUE_POLL_MS);
+    pollQueue();
+  }
+}
 function updateTask(t, ev) {
+  t.status = ev.status;
   t.title.textContent = "Задача №" + t.id + ": " + (STATUS_TEXT[ev.status] || ev.status);
   t.progress.value = ev.progress;
   t.details.textContent =
     ev.status === "QUEUED"
       ? "Чекає на вільного воркера"
       : "Рядок " + ev.current_row + " з " + ev.n + " (" + ev.progress + "%)";
+  t.queueInfo.hidden = ev.status !== "QUEUED";
+  if (ev.status !== "QUEUED") t.queueInfo.textContent = "";
   t.error.textContent = ev.error || "";
   t.finished = FINAL_STATUSES.includes(ev.status);
   t.cancelBtn.hidden = t.finished;
+  if (ev.status === "QUEUED") startQueuePolling();
 }
 
 function ensureTask(id, prepend) {
@@ -259,15 +306,17 @@ function ensureTask(id, prepend) {
   progress.max = 100;
   progress.value = 0;
   const details = document.createElement("p");
+  const queueInfo = document.createElement("p");
+  queueInfo.hidden = true;
   const error = document.createElement("p");
   error.className = "error";
   const cancelBtn = document.createElement("button");
   cancelBtn.type = "button";
   cancelBtn.textContent = "Скасувати";
 
-  el.append(title, progress, details, error, cancelBtn);
+  el.append(title, progress, details, queueInfo, error, cancelBtn);
 
-  t = { id, title, progress, details, error, cancelBtn, socket: null, finished: false, timer: null };
+  t = { id, title, progress, details, queueInfo, error, cancelBtn, socket: null, finished: false, status: null, timer: null };
   cancelBtn.addEventListener("click", () => cancelTask(t));
 
   if (prepend) taskList.prepend(el);
@@ -308,7 +357,7 @@ function connect(t) {
   };
 }
 
-// Закриває всі сокети й очищає список (вихід з акаунта, перезавантаження списку)
+
 function clearTasks() {
   for (const t of tasks.values()) {
     clearTimeout(t.timer);
