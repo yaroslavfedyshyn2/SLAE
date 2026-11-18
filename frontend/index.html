@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>СЛАР</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <h1>Розв'язання СЛАР методом Гаусса</h1>
+
+    <section id="auth-view" hidden>
+      <div class="tabs">
+        <button type="button" id="tab-login" class="active">Вхід</button>
+        <button type="button" id="tab-register">Реєстрація</button>
+      </div>
+      <form id="auth-form">
+        <label>Ім'я користувача
+          <input id="username" required minlength="3" maxlength="50" autocomplete="username">
+        </label>
+        <label>Пароль
+          <input id="password" type="password" required minlength="6" maxlength="72" autocomplete="current-password">
+        </label>
+        <button type="submit" id="auth-submit">Увійти</button>
+        <p id="auth-error" class="error"></p>
+      </form>
+    </section>
+
+    <section id="app-view" hidden>
+      <header>
+        <span>Користувач: <strong id="user-name"></strong></span>
+        <button type="button" id="logout">Вийти</button>
+      </header>
+            <h2>Нова задача</h2>
+
+      <form id="random-form">
+        <label>Кількість невідомих n (від 1 до 5000)
+          <input id="n-input" type="number" required>
+        </label>
+        <button type="submit" id="random-submit">Розв'язати випадкову систему</button>
+      </form>
+
+      <form id="upload-form">
+        <label>Або файл матриці (n рядків по n+1 число, до 300 МБ)
+          <input id="file-input" type="file" accept=".txt,.csv" required>
+        </label>
+        <button type="submit" id="upload-submit">Завантажити й розв'язати</button>
+      </form>
+
+      <p id="task-error" class="error"></p>
+      <p id="task-info"></p>
+            <div       <div id="tasks-section">
+        <h2>Мої задачі</h2>
+        <p id="tasks-empty">Задач ще немає</p>
+        <ul id="task-list"></ul>
+      </div>
+      </div>
+    </section>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>
