@@ -5,6 +5,9 @@ import time
 import docker
 import redis
 import uuid
+import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
 MAX_WORKERS = int(os.getenv("MAX_WORKERS", "3"))             # разом з базовим воркером
@@ -14,7 +17,7 @@ UP_COOLDOWN = int(os.getenv("SCALE_UP_COOLDOWN", "15"))      # с паузи п�
 
 QUEUE_KEY = "celery"      # назва черги Celery в Redis (список)
 LABEL = "slae.autoscaled"  # мітка на контейнерах, які створив автоскейлер
-
+STATS_KEY = "admin:containers"  
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 log = logging.getLogger("autoscaler")
 
@@ -62,13 +65,56 @@ def start_extra(template):
     )
     log.info("started %s", name)
 
+def container_stats(c):
+    """Один знімок CPU % і пам'яті контейнера."""
+    s = c.stats(stream=False)
+    cpu_total = s["cpu_stats"]["cpu_usage"]["total_usage"]
+    cpu_prev = s["precpu_stats"].get("cpu_usage", {}).get("total_usage", 0)
+    sys_total = s["cpu_stats"].get("system_cpu_usage", 0)
+    sys_prev = s["precpu_stats"].get("system_cpu_usage", 0)
+    cpus = s["cpu_stats"].get("online_cpus") or 1
+    cpu = 0.0
+    if sys_total > sys_prev and cpu_total >= cpu_prev:
+        cpu = (cpu_total - cpu_prev) / (sys_total - sys_prev) * cpus * 100
+    mem = s["memory_stats"]
+    inner = mem.get("stats", {})
+    cache = inner.get("inactive_file", inner.get("cache", 0))
+    used = mem.get("usage", 0) - cache
+    return {
+        "name": c.name,
+        "service": c.labels.get("com.docker.compose.service") or "worker-auto",
+        "cpu_percent": round(cpu, 1),
+        "mem_mb": round(used / 1024 / 1024, 1),
+        "mem_limit_mb": round(mem.get("limit", 0) / 1024 / 1024),
+    }
 
+
+def safe_stats(c):
+    try:
+        return container_stats(c)
+    except Exception:
+        return None  # контейнер міг зупинитись просто зараз
+
+
+def stats_loop():
+    """Раз на INTERVAL кладе навантаження всіх контейнерів проєкту в Redis."""
+    while True:
+        try:
+            containers = client.containers.list(
+                filters={"label": f"com.docker.compose.project={project}"}
+            ) + extra_workers()
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                result = [x for x in pool.map(safe_stats, containers) if x]
+            r.set(STATS_KEY, json.dumps(result), ex=30)
+        except Exception:
+            log.exception("stats iteration failed")
+        time.sleep(INTERVAL)
 def main():
     draining = set()   # id воркерів, яким вже надіслано SIGTERM
     empty_since = None
     last_up = 0.0
     log.info("autoscaler started: MAX_WORKERS=%s", MAX_WORKERS)
-
+    threading.Thread(target=stats_loop, daemon=True).start()
     while True:
         try:
             # Прибираємо завершені додаткові контейнери
