@@ -1,0 +1,2 @@
+docker==7.*
+redis==5.*

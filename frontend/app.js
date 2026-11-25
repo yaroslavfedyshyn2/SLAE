@@ -56,6 +56,7 @@ function setMode(newMode) {
 
 function showAuth() {
   clearTasks();
+  stopAdminPolling();
   appView.hidden = true;
   authView.hidden = false;
 }
@@ -64,6 +65,8 @@ function showApp(user) {
   authView.hidden = true;
   appView.hidden = false;
   document.getElementById("user-name").textContent = user.username;
+  if (user.is_admin) startAdminPolling();
+  else stopAdminPolling();
   loadTasks().catch((e) => {
     taskError.textContent = e.message;
   });
@@ -404,6 +407,96 @@ async function cancelTask(t) {
   } finally {
     t.cancelBtn.disabled = false;
   }
+}
+const adminView = document.getElementById("admin-view");
+const adminSummary = document.getElementById("admin-summary");
+const adminError = document.getElementById("admin-error");
+const adminRunning = document.getElementById("admin-running");
+const adminContainers = document.getElementById("admin-containers");
+let adminTimer = null;
+
+function fillTable(table, headers, rows) {
+  const head = document.createElement("tr");
+  for (const h of headers) {
+    const th = document.createElement("th");
+    th.textContent = h;
+    head.append(th);
+  }
+  const out = [head];
+  if (rows.length === 0) {
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = headers.length;
+    td.textContent = "—";
+    tr.append(td);
+    out.push(tr);
+  }
+  for (const row of rows) {
+    const tr = document.createElement("tr");
+    for (const cell of row) {
+      const td = document.createElement("td");
+      td.textContent = cell;
+      tr.append(td);
+    }
+    out.push(tr);
+  }
+  table.replaceChildren(...out);
+}
+
+function renderAdmin(d) {
+  const workers = d.workers === null ? "?" : d.workers.length;
+  const queue = d.queue_length === null ? "?" : d.queue_length;
+  const counts = Object.entries(d.tasks)
+    .map(([status, n]) => (STATUS_TEXT[status] || status) + ": " + n)
+    .join(", ");
+  adminSummary.textContent =
+    "Черга: " + queue + ". Воркерів: " + workers + ". Задачі: " + counts + ".";
+
+  fillTable(
+    adminRunning,
+    ["№", "Користувач", "n", "Прогрес", "Початок"],
+    d.running.map((t) => [
+      t.task_id,
+      t.username,
+      t.n,
+      t.progress + "%",
+      t.started_at ? new Date(t.started_at).toLocaleTimeString() : "",
+    ])
+  );
+  fillTable(
+    adminContainers,
+    ["Контейнер", "CPU %", "Пам'ять, МБ"],
+    (d.containers || []).map((c) => [c.name, c.cpu_percent, c.mem_mb])
+  );
+}
+
+async function pollAdmin() {
+  try {
+    const resp = await api("/admin/overview");
+    if (resp.status === 200) {
+      adminError.textContent = "";
+      renderAdmin(resp.data);
+    } else if (resp.status === 403) {
+      stopAdminPolling();
+    } else {
+      adminError.textContent = errorText(resp);
+    }
+  } catch (e) {
+    adminError.textContent = e.message;
+  }
+}
+
+function startAdminPolling() {
+  adminView.hidden = false;
+  if (adminTimer !== null) return;
+  pollAdmin();
+  adminTimer = setInterval(pollAdmin, 5000);
+}
+
+function stopAdminPolling() {
+  clearInterval(adminTimer);
+  adminTimer = null;
+  adminView.hidden = true;
 }
 setMode("login");
 checkSession();

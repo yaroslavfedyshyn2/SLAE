@@ -120,3 +120,18 @@ form + form {
   width: 100%;
   height: 1.2rem;
 }
+#admin-view {
+  margin-top: 1.5rem;
+}
+
+#admin-view table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+#admin-view th,
+#admin-view td {
+  border: 1px solid #ddd;
+  padding: 0.35rem 0.5rem;
+  text-align: left;
+}
